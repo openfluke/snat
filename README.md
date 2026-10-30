@@ -8,8 +8,9 @@ space + time) projected into scrubable 3D volumes.
 
 License: **Apache-2.0**
 
-> Status: repository scaffold. The Go package will land here next; this README
-> defines the product identity and intended scope.
+> Status: Go library extracted from Fable’s NeuralWave 1.0.0 implementation.
+> The module, tests, command-line entry point, and Apache-2.0 license are present.
+> No release tag has been published by this extraction.
 
 ---
 
@@ -55,17 +56,18 @@ Short gloss:
 
 ---
 
-## Intended capabilities
+## Capabilities
 
-The first Go drop is expected to cover the library core that grew out of
-OpenFluke’s NeuralWave work (prototype + Fable-native port):
+The Go library core grew out of OpenFluke’s NeuralWave prototype and its
+Fable-native port:
 
 - **Sessions** — create, import, append, open, rename, export portable JSON
 - **Events** — forward / backward, normal / step, branch-aware producer payloads
 - **Models** — scan SafeTensors / Welvet `.entity` catalogues; verify, analyse,
   compare, inspect, benchmark
-- **Volumes** — measured weight samples, structural placeholders, projection
-  deep-dives (attention Q/K/V, MLP Gate/Up/Down, norms), init “ghosts”
+- **Volume data** — layer/branch metadata, measured weight samples, tensor
+  classifications and labelled initialization statistics. Projection/head layouts,
+  3D init “ghosts” and playback controls belong to the consuming viewer.
 - **Honesty** — distinguish real producer activations, output logits, and
   labelled theoretical estimates; never substitute random values for missing
   activity
@@ -111,25 +113,87 @@ Playback walks the time axis; the renderer shows the spatial projection.
 | **Fable · Neural Wave** | Native player embedded in ALife Becoming / Fable |
 | **SNAT** | Extracted open-source library — same domain, new name, Apache-2.0 |
 
-Fable (and anything else) should eventually `import` SNAT instead of owning a
-private `neuralwave` package. UI brand names can stay local; **SNAT** is the
-shared trace engine.
+Fable now imports `github.com/openfluke/snat` instead of owning a private Go
+`neuralwave` package. UI brand names stay local; **SNAT** is the shared trace
+engine. Flutter/Flutter Scene rendering and Fable’s C ABI remain in Fable.
 
 ---
 
-## Repository layout (planned)
+## Use from Go
+
+```go
+import "github.com/openfluke/snat"
+
+result, err := snat.Execute(dataRoot, []byte(`{"action":"library"}`))
+```
+
+`Execute` accepts JSON matching the exported `Request` type and returns Go
+values suitable for JSON encoding. Exported `Session`, `Layer`, `Event`, `Model`,
+`Analysis`, and `Summary` types define the portable data contract.
+
+Actions: `library`, `create`, `save`, `open`, `rename`, `export`, `import`,
+`import_session`, `append_log`, `snapshot`, `scan`, `select`, `verify`, `analyze`,
+`compare`, `inspect`, and `benchmark`.
+
+## Command line
+
+```sh
+go run ./cmd/snat -data-root /path/to/application-data <<'JSON'
+{"action":"library"}
+JSON
+```
+
+The CLI reads one request from stdin, emits JSON to stdout, and returns a
+nonzero exit status on failure. Library calls return errors directly.
+
+## Storage compatibility
+
+`dataRoot` is the application data root. Existing Fable saves remain at
+`<dataRoot>/neuralwave/models.json` and
+`<dataRoot>/neuralwave/sessions/<id>/session.json`. The directory name, schema
+version **1**, legacy LOOM import aliases, and public action names are preserved.
+Renaming the Go library does not require migrating or rewriting recordings.
+
+Session/catalogue documents are limited to 64 MiB. Analysis decodes one tensor
+at a time with a 512 MiB decoded-tensor limit and retains up to 256 samples per
+tensor. Metadata inspection avoids decoding weights. Inference/verification use
+Welvet 1.1.3; inference records actual output logits, not internal activations.
+Supported model operations use SafeTensors snapshots and Welvet ENTITY files;
+weight statistics currently require the source SafeTensors snapshot.
+
+## Local Fable development
+
+Keep `fable/` and `snat/` beside each other. Fable’s `go.mod` requires this module
+with a `replace github.com/openfluke/snat => ../snat` directive, matching its
+other sibling libraries. The dependency uses the local-development placeholder
+`v0.0.0` until an actual release is published. No remote release is assumed.
+
+## Repository layout
 
 ```text
 snat/
-├── README.md          ← you are here
-├── LICENSE            ← Apache-2.0
-├── go.mod
-├── snat.go / …        ← session store, schema, Execute-style API
-├── models / tensors   ← catalogue + SafeTensors analysis
-└── examples/          ← import a trace, list sessions, etc.
+├── README.md / CHANGELOG.md
+├── LICENSE / NOTICE           # Apache-2.0 and source attribution
+├── go.mod / go.sum            # independent module; no Fable dependency
+├── types.go / store.go        # trace schema and session operations
+├── import.go                  # legacy telemetry/activity import
+├── models.go / tensors.go     # catalogue and SafeTensors analysis
+├── inference.go / inspect.go  # Welvet integration and diagnostics
+├── snat_test.go               # migrated persistence/model tests
+├── cmd/snat/                  # one-request JSON CLI
+└── tools/download_models.sh   # optional manually invoked helper
 ```
 
-Exact package paths will follow when the Go sources are pushed.
+## Development
+
+```sh
+make test
+make check     # race tests, vet, formatting
+```
+
+Go 1.27 is the extraction toolchain. Dependencies are resolved independently of
+Fable; tests include a tiny real Welvet conversion/inference cycle and require
+no downloaded model weights. See [CHANGELOG.md](CHANGELOG.md) for lineage.
 
 ---
 
@@ -149,9 +213,9 @@ Exact package paths will follow when the Go sources are pushed.
 
 - [x] Name and identity (**SNAT**)
 - [x] Public README
-- [ ] Go module + session schema
-- [ ] Tests migrated from Fable/NeuralWave
-- [ ] Example importers / CLI
+- [x] Go module + session schema
+- [x] Tests migrated from Fable/NeuralWave
+- [x] JSON request CLI (including import actions)
 - [ ] First tagged release
 
 ---
@@ -160,5 +224,5 @@ Exact package paths will follow when the Go sources are pushed.
 
 Copyright OpenFluke contributors.
 
-Licensed under the Apache License, Version 2.0. See `LICENSE` when added (same
-terms as the NeuralWave prototype lineage).
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE)
+(same terms as the NeuralWave prototype lineage).

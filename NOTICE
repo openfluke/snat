@@ -1,0 +1,9 @@
+SNAT — Spatiotemporal Neural Activity Trace
+Copyright 2026 OpenFluke contributors.
+
+Extracted from the native NeuralWave library in Fable / ALife Becoming.
+Tensor classification, initialization estimates, and the optional model download
+helper derive from the Apache-2.0 OpenFluke NeuralWave prototype.
+The original project attribution is retained in source comments and changelog.
+
+Welvet and other dependencies retain their own licenses.
