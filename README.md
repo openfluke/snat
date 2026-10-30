@@ -10,7 +10,7 @@ License: **Apache-2.0**
 
 > Status: Go library extracted from Fable’s NeuralWave 1.0.0 implementation.
 > The module, tests, command-line entry point, and Apache-2.0 license are present.
-> No release tag has been published by this extraction.
+> Release: **v1.0.0** · publish with `./release.sh`.
 
 ---
 
@@ -166,7 +166,8 @@ weight statistics currently require the source SafeTensors snapshot.
 Keep `fable/` and `snat/` beside each other. Fable’s `go.mod` requires this module
 with a `replace github.com/openfluke/snat => ../snat` directive, matching its
 other sibling libraries. The dependency uses the local-development placeholder
-`v0.0.0` until an actual release is published. No remote release is assumed.
+`v0.0.0` for sibling development. Published consumers can require `v1.0.0`
+and omit the local replacement.
 
 ## Repository layout
 
@@ -216,7 +217,7 @@ no downloaded model weights. See [CHANGELOG.md](CHANGELOG.md) for lineage.
 - [x] Go module + session schema
 - [x] Tests migrated from Fable/NeuralWave
 - [x] JSON request CLI (including import actions)
-- [ ] First tagged release
+- [x] v1.0.0 release tooling
 
 ---
 
@@ -226,3 +227,9 @@ Copyright OpenFluke contributors.
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE)
 (same terms as the NeuralWave prototype lineage).
+
+## Release
+
+Run `./release.sh` to test, commit pending changes, push `main` and the version
+tag, and create the GitHub release. Requires authenticated `git` and `gh`.
+The version comes from `types.go`; existing tags are never force-moved.
