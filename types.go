@@ -7,10 +7,13 @@ package snat
 
 import "time"
 
-const Version = "1.0.0"
+const Version = "1.1.0"
 const SchemaVersion = 1
 
 type Layer struct {
+	DType       string    `json:"dtype,omitempty"`
+	ID          string    `json:"id,omitempty"`
+	GridDepth   int       `json:"grid_depth,omitempty"`
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
 	Heads       int       `json:"num_heads,omitempty"`
@@ -58,21 +61,29 @@ type Model struct {
 type Event = map[string]any
 
 type Session struct {
-	Schema        int       `json:"schema"`
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	Model         string    `json:"model"`
-	Created       time.Time `json:"created"`
-	Source        string    `json:"source"`
-	Description   string    `json:"description,omitempty"`
-	Layers        []Layer   `json:"layers"`
-	Events        []Event   `json:"events"`
-	Analysis      *Analysis `json:"analysis,omitempty"`
-	BlankAnalysis *Analysis `json:"blank_analysis,omitempty"`
-	Output        string    `json:"output,omitempty"`
-	Prompt        string    `json:"prompt,omitempty"`
+	Streamed      bool           `json:"streamed,omitempty"`
+	EventCount    int            `json:"event_count"`
+	Status        string         `json:"status,omitempty"`
+	Revision      int64          `json:"revision"`
+	NextSequence  int64          `json:"next_sequence"`
+	Progress      float64        `json:"progress"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	Schema        int            `json:"schema"`
+	ID            string         `json:"id"`
+	Title         string         `json:"title"`
+	Model         string         `json:"model"`
+	Created       time.Time      `json:"created"`
+	Source        string         `json:"source"`
+	Description   string         `json:"description,omitempty"`
+	Layers        []Layer        `json:"layers"`
+	Events        []Event        `json:"events"`
+	Analysis      *Analysis      `json:"analysis,omitempty"`
+	BlankAnalysis *Analysis      `json:"blank_analysis,omitempty"`
+	Output        string         `json:"output,omitempty"`
+	Prompt        string         `json:"prompt,omitempty"`
 }
 type Summary struct {
+	Status  string    `json:"status,omitempty"`
 	ID      string    `json:"id"`
 	Title   string    `json:"title"`
 	Model   string    `json:"model"`
@@ -82,13 +93,20 @@ type Summary struct {
 	Events  int       `json:"events"`
 }
 type Request struct {
-	ModelID   string   `json:"model_id"`
-	Action    string   `json:"action"`
-	Path      string   `json:"path"`
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Title     string   `json:"title"`
-	Prompt    string   `json:"prompt"`
-	MaxTokens int      `json:"max_tokens"`
-	Session   *Session `json:"session,omitempty"`
+	Received       int      `json:"received"`
+	IncludeSession *bool    `json:"include_session,omitempty"`
+	Offset         int      `json:"offset"`
+	Address        string   `json:"address"`
+	Token          string   `json:"token"`
+	Follow         bool     `json:"follow"`
+	Revision       int64    `json:"revision"`
+	ModelID        string   `json:"model_id"`
+	Action         string   `json:"action"`
+	Path           string   `json:"path"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Title          string   `json:"title"`
+	Prompt         string   `json:"prompt"`
+	MaxTokens      int      `json:"max_tokens"`
+	Session        *Session `json:"session,omitempty"`
 }

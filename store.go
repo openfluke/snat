@@ -79,6 +79,7 @@ func saveSession(root string, s *Session) (*Session, error) {
 		return nil, fmt.Errorf("missing session")
 	}
 	if s.ID == "" {
+		s.Streamed = false
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err != nil {
 			return nil, err
@@ -90,6 +91,9 @@ func saveSession(root string, s *Session) (*Session, error) {
 		return nil, fmt.Errorf("unsupported session schema %d", s.Schema)
 	}
 	s.Schema = SchemaVersion
+	if s.Metadata == nil {
+		s.Metadata = map[string]any{}
+	}
 	if strings.TrimSpace(s.Title) == "" {
 		s.Title = s.Model
 	}
@@ -102,11 +106,17 @@ func saveSession(root string, s *Session) (*Session, error) {
 	if s.Events == nil {
 		s.Events = []Event{}
 	}
+	if s.Streamed {
+		return nil, fmt.Errorf("stream recordings are read-only; append via TCP or import an independent copy")
+	}
 	path, err := sessionPath(root, s.ID)
 	if err != nil {
 		return nil, err
 	}
 	if err = writeJSON(path, s); err != nil {
+		return nil, err
+	}
+	if err = rememberSession(root, s); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -123,9 +133,22 @@ func loadSession(root, id string) (*Session, error) {
 	if s.Schema != SchemaVersion {
 		return nil, fmt.Errorf("unsupported session schema %d", s.Schema)
 	}
+	if s.Streamed {
+		if err = loadStream(root, &s); err != nil {
+			return nil, err
+		}
+	}
 	return &s, nil
 }
 func listSessions(root string) ([]Summary, error) {
+	recent := []Summary{}
+	err := readJSON(filepath.Join(root, "recent-sessions.json"), &recent)
+	if os.IsNotExist(err) {
+		return scanSessions(root)
+	}
+	return recent, err
+}
+func scanSessions(root string) ([]Summary, error) {
 	entries, err := os.ReadDir(filepath.Join(root, "sessions"))
 	if os.IsNotExist(err) {
 		return []Summary{}, nil
@@ -142,7 +165,7 @@ func listSessions(root string) ([]Summary, error) {
 		if err != nil {
 			return nil, fmt.Errorf("session %s: %w", e.Name(), err)
 		}
-		result = append(result, Summary{s.ID, s.Title, s.Model, s.Created, s.Source, len(s.Layers), len(s.Events)})
+		result = append(result, summaryOf(s))
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Created.After(result[j].Created) })
 	return result, nil
@@ -163,6 +186,13 @@ func loadModels(root string) ([]Model, error) {
 
 // Execute serializes library mutations independently of the game simulation.
 func Execute(dataRoot string, request []byte) (result any, err error) {
+	var control Request
+	if e := json.Unmarshal(request, &control); e != nil {
+		return nil, e
+	}
+	if isLiveAction(control.Action) {
+		return executeLive(dataRoot, control)
+	}
 	diskMu.Lock()
 	defer diskMu.Unlock()
 	defer func() {
@@ -223,6 +253,9 @@ func Execute(dataRoot string, request []byte) (result any, err error) {
 		s, e := loadSession(root, r.ID)
 		if e != nil {
 			return nil, e
+		}
+		if s.Streamed {
+			return renameStream(root, r.ID, r.Title)
 		}
 		s.Title = r.Title
 		return saveSession(root, s)

@@ -115,7 +115,7 @@ func importFolder(root, path string) ([]Summary, error) {
 		if _, err = saveSession(root, s); err != nil {
 			return nil, err
 		}
-		result = append(result, Summary{s.ID, s.Title, s.Model, s.Created, s.Source, len(s.Layers), len(s.Events)})
+		result = append(result, summaryOf(s))
 	}
 	return result, nil
 }
