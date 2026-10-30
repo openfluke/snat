@@ -254,3 +254,18 @@ Its viewer can follow the producer or pin a saved session. Sessions persist in
 individual folders with append-only event chunks and a bounded recent index;
 existing schema 1 imports remain supported. Non-loopback listeners require an
 explicit management token. Default endpoints are local to this machine.
+
+## Grouped replay chapters
+
+A streamed session can contain named chapters with distinct layer geometry and
+half-open event ranges. TCP `begin_chapter` / `end_chapter` manage their setup,
+outcomes and boundaries; UDP packets are tagged with the current chapter id.
+Fable's **Neural Replay** panel switches geometry as playback crosses boundaries
+and provides a chapter selector for seeking. Chapter metadata survives saved
+session open/import/export. A completed tour can include unsupported chapters;
+each chapter preserves its own status and trace-quality statistics.
+
+An interrupted last chapter is retried from its journal boundary with a fresh
+UDP routing token. Earlier completed chapters are retained. Repeating a completed
+chapter's management request is idempotent. The latest integration currently
+uses sibling-module development replacements in Fable and the sweep producer.

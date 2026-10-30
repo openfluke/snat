@@ -1,6 +1,9 @@
 # SNAT changelog
 
-## 1.1.0 — Live sessions
+## 1.1.0 — Live sessions and grouped chapters
+
+- Named replay chapters with per-example geometry, event boundaries and outcomes.
+- Durable interrupted-chapter retry and completed-chapter idempotency.
 
 - TCP session management and TANHI UDP neural telemetry, with per-session routing.
 - Durable streamed sessions, progress, viewer follow/pin and playback acknowledgement.

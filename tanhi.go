@@ -48,6 +48,7 @@ type nativeBinding struct {
 }
 
 func (h *liveHub) resetTelemetry(s *Session, token string) {
+	h.telemetryErr = ""
 	h.stream = s
 	h.streamToken = token
 	h.sampleThrough = 0
@@ -114,6 +115,9 @@ func (h *liveHub) acceptTANHILocked(p TANHIPacket, source string) {
 	if h.stream == nil || h.stream.Status != "running" {
 		return
 	}
+	if chapter := h.currentChapter(); chapter != nil && chapter.Status != "running" {
+		return
+	}
 	authenticated := func(id, token string) bool {
 		return id == h.stream.ID && subtle.ConstantTimeCompare([]byte(token), []byte(h.streamToken)) == 1
 	}
@@ -131,6 +135,9 @@ func (h *liveHub) acceptTANHILocked(p TANHIPacket, source string) {
 		if len(h.sampleQueue) >= 4096 {
 			h.udpStats.Rejected++
 			return
+		}
+		if chapter := h.currentChapter(); chapter != nil {
+			p.Event["chapter_id"] = chapter.ID
 		}
 		p.Event["tanhi_seq"] = p.Seq
 		p.Event["transport_channel"] = "samples"
@@ -183,6 +190,9 @@ func (h *liveHub) acceptTANHILocked(p TANHIPacket, source string) {
 		direction = "backward"
 	}
 	e := Event{"Type": direction, "phase": "native_tanhi_" + p.Phase, "values_kind": "runtime_timing", "transport": "tanhi_udp", "transport_channel": "native", "tanhi_seq": p.Seq, "grid_depth": p.Z, "grid_row": p.Y, "grid_col": p.X, "cell_layer": p.L, "layer_id": fmt.Sprintf("grid/%d/%d/%d/%d", p.Z, p.Y, p.X, p.L), "t0_ns": p.T0Ns, "t1_ns": p.T1Ns, "shape": p.Shape, "Stats": map[string]any{"LayerType": p.Layer}}
+	if chapter := h.currentChapter(); chapter != nil {
+		e["chapter_id"] = chapter.ID
+	}
 	h.pending = append(h.pending, e)
 	h.udpStats.Native++
 	h.udpStats.Received++

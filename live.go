@@ -39,6 +39,7 @@ type Progress struct {
 // WireMessage is a newline-delimited JSON frame. Only trace writes are exposed;
 // the TCP port cannot invoke filesystem imports, model loading, or exports.
 type WireMessage struct {
+	Chapter         *Chapter  `json:"chapter,omitempty"`
 	ExpectedPackets uint64    `json:"expected_packets"`
 	Protocol        string    `json:"protocol"`
 	Op              string    `json:"op"`
@@ -52,6 +53,7 @@ type WireMessage struct {
 	Status          string    `json:"status,omitempty"`
 }
 type WireReply struct {
+	Chapter      *Chapter `json:"chapter,omitempty"`
 	UDPAddress   string   `json:"udp_address"`
 	StreamToken  string   `json:"stream_token,omitempty"`
 	Missing      []uint64 `json:"missing,omitempty"`
@@ -200,6 +202,7 @@ func (h *liveHub) statusLocked(r Request) LiveStatus {
 		}
 		if err == nil && (r.ID != id || r.Revision != session.Revision) {
 			copy := *session
+			copy.Chapters = append([]Chapter{}, session.Chapters...)
 			copy.Metadata = map[string]any{}
 			for key, value := range session.Metadata {
 				copy.Metadata[key] = value
@@ -377,6 +380,8 @@ func (h *liveHub) receive(m WireMessage) WireReply {
 		}
 		h.remember(s)
 		return WireReply{OK: true, ID: id, NextSequence: s.NextSequence, Revision: s.Revision, StreamToken: state.Token, UDPAddress: h.udpAddress}
+	case "begin_chapter", "end_chapter":
+		return h.manageChapterLocked(m)
 	case "append":
 		return fail(fmt.Errorf("neural traffic uses TANHI UDP; TCP is for session management"))
 	case "flush", "finish", "focus":

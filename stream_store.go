@@ -11,6 +11,7 @@ import (
 )
 
 type streamState struct {
+	Chapters  []Chapter `json:"chapters,omitempty"`
 	Token     string    `json:"token"`
 	Telemetry *UDPStats `json:"telemetry,omitempty"`
 	Status    string    `json:"status"`
@@ -28,6 +29,7 @@ func framePath(root, id string, seq int64) string {
 	return filepath.Join(root, "sessions", id, "frames", fmt.Sprintf("%020d.json", seq))
 }
 func applyStreamState(s *Session, state streamState) {
+	s.Chapters = state.Chapters
 	s.Status = state.Status
 	s.Title = state.Title
 	s.Revision = state.Revision

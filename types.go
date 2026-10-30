@@ -60,7 +60,22 @@ type Model struct {
 // Unknown fields survive import/save/export without lossy schema conversion.
 type Event = map[string]any
 
+// Chapter is a named example within a session. Event ranges are half-open.
+type Chapter struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Layers      []Layer        `json:"layers"`
+	StartEvent  int            `json:"start_event"`
+	EndEvent    int            `json:"end_event"`
+	Status      string         `json:"status"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	StartFrame  int64          `json:"start_frame"`
+	StartBytes  int64          `json:"start_bytes"`
+}
+
 type Session struct {
+	Chapters      []Chapter      `json:"chapters,omitempty"`
 	Streamed      bool           `json:"streamed,omitempty"`
 	EventCount    int            `json:"event_count"`
 	Status        string         `json:"status,omitempty"`
