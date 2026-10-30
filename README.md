@@ -10,7 +10,7 @@ License: **Apache-2.0**
 
 > Status: Go library extracted from Fable’s NeuralWave 1.0.0 implementation.
 > The module, tests, command-line entry point, and Apache-2.0 license are present.
-> Release: **v1.0.0** · publish with `./release.sh`.
+> Release: **v1.1.0** · publish with `./release.sh`.
 
 ---
 
@@ -233,3 +233,24 @@ Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTI
 Run `./release.sh` to test, commit pending changes, push `main` and the version
 tag, and create the GitHub release. Requires authenticated `git` and `gh`.
 The version comes from `types.go`; existing tags are never force-moved.
+
+## Live transport (1.1.0)
+
+TCP (`127.0.0.1:9731`) carries NDJSON session creation, focus, progress,
+acknowledgements and completion. It rejects neural sample payloads.
+TANHI UDP (`127.0.0.1:17481`) carries native Welvet `tanhi1` timing packets
+and session-routed measured samples. The TCP hello advertises the UDP address;
+create returns a per-session stream secret. Native emitters bracket their trace
+with authenticated `snat:<id>:<secret>` / `snat-end:<id>:<secret>` sweep markers.
+
+`Client.TANHI` sends measured data over UDP and repairs missing sample sequences
+using UDP retransmission; TCP flush receipts contain counts and missing sequence
+numbers. Native timing loss is reported as a partial trace. Timings are not
+activation tensors; measured weight deltas are not gradients. Recordings preserve
+transport provenance and packet quality statistics.
+
+Fable owns the listeners and closes both transports when its engine closes.
+Its viewer can follow the producer or pin a saved session. Sessions persist in
+individual folders with append-only event chunks and a bounded recent index;
+existing schema 1 imports remain supported. Non-loopback listeners require an
+explicit management token. Default endpoints are local to this machine.

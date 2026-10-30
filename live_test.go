@@ -4,6 +4,7 @@ package snat
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"testing"
 	"time"
 )
@@ -41,18 +42,51 @@ func TestLiveTCPDurabilitySequenceAndPinnedView(t *testing.T) {
 		return r.ID
 	}
 	first := create("run/case-one")
-	frame := WireMessage{Op: "append", ID: first, Sequence: 0, Events: []Event{{"type": "forward", "layer_id": "grid/0/0/0/0", "values": []float32{.1, .2}}}}
-	for i := 0; i < 2; i++ {
-		if _, err = c.Send(ctx, frame); err != nil {
-			t.Fatal(err)
+	if _, err = c.Send(ctx, WireMessage{Op: "append", ID: first, Events: []Event{{"values": []float32{.1}}}}); err == nil {
+		t.Fatal("TCP accepted neural samples")
+	}
+	// Re-open the same idempotent session to obtain its UDP routing secret.
+	created, err := c.Send(ctx, WireMessage{Op: "create", Key: "run/case-one", Session: &Session{Title: "one"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := c.TANHI(first, created.StreamToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	if err = sender.SendEvent(Event{"Type": "forward", "layer_id": "grid/0/0/0/0", "values": []float32{.1, .2}}); err != nil {
+		t.Fatal(err)
+	}
+	// Duplicate UDP datagrams must not duplicate recorded events.
+	if _, err = sender.conn.Write(sender.packets[0]); err != nil {
+		t.Fatal(err)
+	}
+	// Native Welvet TANHI traffic uses its own UDP socket and sequence space.
+	addr, _ := net.ResolveUDPAddr("udp", sender.Address())
+	native, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer native.Close()
+	sendNative := func(p TANHIPacket) {
+		t.Helper()
+		b, _ := json.Marshal(p)
+		if _, e := native.Write(b); e != nil {
+			t.Fatal(e)
 		}
 	}
-	bad := frame
-	bad.Sequence = 4
-	if _, err = c.Send(ctx, bad); err == nil {
-		t.Fatal("accepted sequence gap")
+	sendNative(TANHIPacket{V: "tanhi1", Seq: 10, Phase: "sweep", Label: sender.StartMarker()})
+	sendNative(TANHIPacket{V: "tanhi1", Seq: 11, Phase: "fwd", Layer: "Dense"})
+	sendNative(TANHIPacket{V: "tanhi1", Seq: 12, Phase: "sweep", Label: sender.EndMarker()})
+	receipt, err := sender.Flush(ctx, true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err = c.Send(ctx, WireMessage{Op: "finish", ID: first, Sequence: 1, Status: "complete"}); err != nil {
+	if receipt.Telemetry.Samples != 1 || receipt.Telemetry.Native != 1 || receipt.Telemetry.Partial {
+		t.Fatalf("bad UDP receipt: %+v", receipt)
+	}
+	if _, err = c.Send(ctx, WireMessage{Op: "finish", ID: first, ExpectedPackets: 1, Status: "complete"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = c.Send(ctx, WireMessage{Op: "import", Key: "/etc/passwd"}); err == nil {
@@ -64,7 +98,7 @@ func TestLiveTCPDurabilitySequenceAndPinnedView(t *testing.T) {
 		t.Fatal("duplicate IDs")
 	}
 	poll := liveRequest(t, root, Request{Action: "live_poll"})
-	if poll.Session == nil || poll.Session.ID != first || len(poll.Session.Events) != 1 {
+	if poll.Session == nil || poll.Session.ID != first || len(poll.Session.Events) != 2 {
 		t.Fatalf("pin or retry lost: %+v", poll.Session)
 	}
 	liveRequest(t, root, Request{Action: "live_select", Follow: true})
@@ -83,7 +117,7 @@ func TestLiveTCPDurabilitySequenceAndPinnedView(t *testing.T) {
 	c.Close()
 	StopLive(root)
 	opened := request(t, root, Request{Action: "open", ID: first}).(*Session)
-	if opened.Status != "complete" || len(opened.Events) != 1 {
+	if opened.Status != "complete" || len(opened.Events) != 2 {
 		t.Fatal("stream was not durably saved")
 	}
 	restarted := liveRequest(t, root, Request{Action: "server_start", Address: "127.0.0.1:0"})
@@ -95,5 +129,33 @@ func TestLiveServerRefusesUnprotectedPublicListener(t *testing.T) {
 	raw, _ := json.Marshal(Request{Action: "server_start", Address: "0.0.0.0:0"})
 	if _, err := Execute(t.TempDir(), raw); err == nil {
 		t.Fatal("public listener needs explicit token")
+	}
+}
+
+func TestTANHIReordersSamplesAndReportsMissingPackets(t *testing.T) {
+	h := &liveHub{stream: &Session{ID: "case", Status: "running"}, streamToken: "secret", sampleQueue: map[uint64]Event{}, nativeBindings: map[string]*nativeBinding{}}
+	packet := func(seq uint64) TANHIPacket {
+		return TANHIPacket{V: "tanhi1", Seq: seq, SessionID: "case", StreamToken: "secret", Event: Event{"Type": "forward"}}
+	}
+	h.acceptTANHILocked(packet(2), "samples")
+	r := h.receipt(2)
+	if len(r.Missing) != 1 || r.Missing[0] != 1 || !r.Telemetry.Partial {
+		t.Fatalf("missing sample not reported: %+v", r)
+	}
+	h.acceptTANHILocked(packet(1), "samples")
+	h.acceptTANHILocked(packet(2), "samples")
+	if len(h.pending) != 2 || h.sampleThrough != 2 || h.receipt(2).Telemetry.Partial {
+		t.Fatal("UDP reorder/dedup failed")
+	}
+	invalid := packet(3)
+	invalid.StreamToken = "wrong"
+	h.acceptTANHILocked(invalid, "samples")
+	if h.udpStats.Rejected != 1 || h.sampleThrough != 2 {
+		t.Fatal("accepted wrong stream secret")
+	}
+	h.acceptTANHILocked(TANHIPacket{V: "tanhi1", Seq: 10, Phase: "sweep", Label: "snat:case:secret"}, "native")
+	h.acceptTANHILocked(TANHIPacket{V: "tanhi1", Seq: 12, Phase: "sweep", Label: "snat-end:case:secret"}, "native")
+	if h.receipt(2).Telemetry.NativeMissing != 1 {
+		t.Fatal("native packet gap not reported")
 	}
 }

@@ -14,10 +14,11 @@ import (
 // Client serializes acknowledged frames. Callers can safely retry a failed
 // append with the same session ID and sequence after reconnecting.
 type Client struct {
-	mu     sync.Mutex
-	conn   net.Conn
-	reader *bufio.Reader
-	token  string
+	UDPAddress string
+	mu         sync.Mutex
+	conn       net.Conn
+	reader     *bufio.Reader
+	token      string
 }
 
 func Dial(ctx context.Context, address, token string) (*Client, error) {
@@ -26,10 +27,12 @@ func Dial(ctx context.Context, address, token string) (*Client, error) {
 		return nil, err
 	}
 	c := &Client{conn: conn, reader: bufio.NewReader(conn), token: token}
-	if _, err = c.Send(ctx, WireMessage{Op: "hello"}); err != nil {
+	reply, err := c.Send(ctx, WireMessage{Op: "hello"})
+	if err != nil {
 		conn.Close()
 		return nil, err
 	}
+	c.UDPAddress = reply.UDPAddress
 	return c, nil
 }
 func (c *Client) Close() error { return c.conn.Close() }

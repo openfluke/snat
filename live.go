@@ -39,27 +39,33 @@ type Progress struct {
 // WireMessage is a newline-delimited JSON frame. Only trace writes are exposed;
 // the TCP port cannot invoke filesystem imports, model loading, or exports.
 type WireMessage struct {
-	Protocol string    `json:"protocol"`
-	Op       string    `json:"op"`
-	Token    string    `json:"token,omitempty"`
-	Key      string    `json:"key,omitempty"`
-	ID       string    `json:"id,omitempty"`
-	Sequence int64     `json:"sequence"`
-	Session  *Session  `json:"session,omitempty"`
-	Events   []Event   `json:"events,omitempty"`
-	Progress *Progress `json:"progress,omitempty"`
-	Status   string    `json:"status,omitempty"`
+	ExpectedPackets uint64    `json:"expected_packets"`
+	Protocol        string    `json:"protocol"`
+	Op              string    `json:"op"`
+	Token           string    `json:"token,omitempty"`
+	Key             string    `json:"key,omitempty"`
+	ID              string    `json:"id,omitempty"`
+	Sequence        int64     `json:"sequence"`
+	Session         *Session  `json:"session,omitempty"`
+	Events          []Event   `json:"events,omitempty"`
+	Progress        *Progress `json:"progress,omitempty"`
+	Status          string    `json:"status,omitempty"`
 }
 type WireReply struct {
-	ViewedID     string `json:"viewed_id,omitempty"`
-	ViewedEvents int    `json:"viewed_events"`
-	Following    bool   `json:"following"`
-	ViewerActive bool   `json:"viewer_active"`
-	OK           bool   `json:"ok"`
-	Error        string `json:"error,omitempty"`
-	ID           string `json:"id,omitempty"`
-	NextSequence int64  `json:"next_sequence"`
-	Revision     int64  `json:"revision"`
+	UDPAddress   string   `json:"udp_address"`
+	StreamToken  string   `json:"stream_token,omitempty"`
+	Missing      []uint64 `json:"missing,omitempty"`
+	Telemetry    UDPStats `json:"telemetry"`
+	EventCount   int      `json:"event_count"`
+	ViewedID     string   `json:"viewed_id,omitempty"`
+	ViewedEvents int      `json:"viewed_events"`
+	Following    bool     `json:"following"`
+	ViewerActive bool     `json:"viewer_active"`
+	OK           bool     `json:"ok"`
+	Error        string   `json:"error,omitempty"`
+	ID           string   `json:"id,omitempty"`
+	NextSequence int64    `json:"next_sequence"`
+	Revision     int64    `json:"revision"`
 }
 type LiveView struct {
 	Follow     bool   `json:"follow"`
@@ -67,6 +73,8 @@ type LiveView struct {
 	ProducerID string `json:"producer_id"`
 }
 type LiveStatus struct {
+	UDPAddress  string    `json:"udp_address"`
+	Telemetry   UDPStats  `json:"telemetry"`
 	EventOffset int       `json:"event_offset"`
 	Listening   bool      `json:"listening"`
 	Address     string    `json:"address"`
@@ -79,21 +87,28 @@ type LiveStatus struct {
 	Session     *Session  `json:"session,omitempty"`
 }
 type liveHub struct {
-	stream         *Session
-	viewedID       string
-	viewedEvents   int
-	polled         time.Time
-	stopping       bool
-	mu             sync.Mutex
-	root           string
-	listener       net.Listener
-	address, token string
-	clients        map[net.Conn]struct{}
-	wg             sync.WaitGroup
-	view           LiveView
-	progress       Progress
-	updated        time.Time
-	recent         []Summary
+	udp                                   *net.UDPConn
+	udpAddress, streamToken, telemetryErr string
+	sampleThrough                         uint64
+	sampleQueue                           map[uint64]Event
+	pending                               []Event
+	nativeBindings                        map[string]*nativeBinding
+	udpStats                              UDPStats
+	stream                                *Session
+	viewedID                              string
+	viewedEvents                          int
+	polled                                time.Time
+	stopping                              bool
+	mu                                    sync.Mutex
+	root                                  string
+	listener                              net.Listener
+	address, token                        string
+	clients                               map[net.Conn]struct{}
+	wg                                    sync.WaitGroup
+	view                                  LiveView
+	progress                              Progress
+	updated                               time.Time
+	recent                                []Summary
 }
 
 var liveHubs = struct {
@@ -129,7 +144,7 @@ func executeLive(dataRoot string, r Request) (any, error) {
 	h := hubFor(dataRoot)
 	switch r.Action {
 	case "server_start":
-		if err := h.start(r.Address, r.Token); err != nil {
+		if err := h.start(r.Address, r.UDPAddress, r.Token); err != nil {
 			return nil, err
 		}
 	case "server_stop":
@@ -165,7 +180,7 @@ func executeLive(dataRoot string, r Request) (any, error) {
 	return h.statusLocked(r), nil
 }
 func (h *liveHub) statusLocked(r Request) LiveStatus {
-	result := LiveStatus{Listening: h.listener != nil, Address: h.address, Connections: len(h.clients), Protocol: WireProtocol, Updated: h.updated, View: h.view, Progress: h.progress, Recent: append([]Summary{}, h.recent...)}
+	result := LiveStatus{UDPAddress: h.udpAddress, Telemetry: h.receipt(0).Telemetry, Listening: h.listener != nil, Address: h.address, Connections: len(h.clients), Protocol: WireProtocol, Updated: h.updated, View: h.view, Progress: h.progress, Recent: append([]Summary{}, h.recent...)}
 	id := h.view.PinnedID
 	if h.view.Follow {
 		id = h.view.ProducerID
@@ -202,7 +217,7 @@ func (h *liveHub) statusLocked(r Request) LiveStatus {
 
 	return result
 }
-func (h *liveHub) start(address, token string) error {
+func (h *liveHub) start(address, udpAddress, token string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.stopping {
@@ -225,10 +240,37 @@ func (h *liveHub) start(address, token string) error {
 	if err != nil {
 		return err
 	}
+	if udpAddress == "" {
+		_, port, _ := net.SplitHostPort(address)
+		udpPort := "17481"
+		if port == "0" {
+			udpPort = "0"
+		}
+		udpAddress = net.JoinHostPort(host, udpPort)
+	}
+	udpAddr, e := net.ResolveUDPAddr("udp", udpAddress)
+	if e != nil {
+		listener.Close()
+		return e
+	}
+	if (udpAddr.IP == nil || !udpAddr.IP.IsLoopback()) && token == "" {
+		listener.Close()
+		return fmt.Errorf("a token is required for non-loopback UDP")
+	}
+	udp, e := net.ListenUDP("udp", udpAddr)
+	if e != nil {
+		listener.Close()
+		return e
+	}
+	_ = udp.SetReadBuffer(4 << 20)
+	h.udp = udp
+	h.udpAddress = udp.LocalAddr().String()
+	h.telemetryErr = ""
 	h.listener = listener
 	h.address = listener.Addr().String()
 	h.token = token
-	h.wg.Add(1)
+	h.wg.Add(2)
+	go h.readUDP(udp)
 	go h.accept(listener)
 	return nil
 }
@@ -274,6 +316,7 @@ func (h *liveHub) serve(c net.Conn, token string) {
 		} else {
 			reply = h.receive(m)
 			h.mu.Lock()
+			reply.UDPAddress = h.udpAddress
 			reply.ViewedID = h.viewedID
 			reply.ViewedEvents = h.viewedEvents
 			reply.Following = h.view.Follow
@@ -322,96 +365,76 @@ func (h *liveHub) receive(m WireMessage) WireReply {
 		if err != nil {
 			return fail(err)
 		}
-		h.stream = s
+		var state streamState
+		if err = readJSON(statePath(h.root, s.ID), &state); err != nil {
+			return fail(err)
+		}
+		h.resetTelemetry(s, state.Token)
 		h.view.ProducerID = id
 		h.updated = time.Now().UTC()
 		if m.Progress != nil {
 			h.progress = *m.Progress
 		}
 		h.remember(s)
-		return WireReply{OK: true, ID: id, NextSequence: s.NextSequence, Revision: s.Revision}
-	case "append", "finish", "focus":
-		var s *Session
-		var err error
-		if h.stream != nil && h.stream.ID == m.ID {
-			s = h.stream
-		} else {
-			s, err = loadSession(h.root, m.ID)
+		return WireReply{OK: true, ID: id, NextSequence: s.NextSequence, Revision: s.Revision, StreamToken: state.Token, UDPAddress: h.udpAddress}
+	case "append":
+		return fail(fmt.Errorf("neural traffic uses TANHI UDP; TCP is for session management"))
+	case "flush", "finish", "focus":
+		if h.stream == nil || h.stream.ID != m.ID {
+			return fail(fmt.Errorf("session is not the current producer stream"))
 		}
-		if err != nil {
-			return fail(err)
-		}
+		s := h.stream
 		if m.Op == "focus" {
 			h.view.ProducerID = s.ID
-			h.updated = time.Now().UTC()
-			return WireReply{OK: true, ID: s.ID, NextSequence: s.NextSequence, Revision: s.Revision}
+			return WireReply{OK: true, ID: s.ID}
 		}
-		if !s.Streamed {
-			return fail(fmt.Errorf("TCP append requires a streaming session"))
-		}
-		var state streamState
-		if err = readJSON(statePath(h.root, s.ID), &state); err != nil {
+		if err := h.flushTelemetryLocked(); err != nil {
 			return fail(err)
 		}
-		applyStreamState(s, state)
-		if m.Sequence > state.Next {
-			return fail(fmt.Errorf("sequence gap: expected %d", state.Next))
+		receipt := h.receipt(m.ExpectedPackets)
+		if !receipt.OK {
+			return receipt
 		}
-		if m.Sequence < state.Next {
-			return WireReply{OK: true, ID: s.ID, NextSequence: s.NextSequence, Revision: s.Revision}
+		if m.Op == "flush" {
+			return receipt
 		}
-		if state.Status != "running" {
-			return fail(fmt.Errorf("session is already %s", state.Status))
+		if s.Status != "running" {
+			return receipt
 		}
-		if m.Op == "append" {
-			if len(m.Events) == 0 {
-				return fail(fmt.Errorf("append needs events"))
-			}
-			encoded, e := json.Marshal(m.Events)
-			if e != nil {
-				return fail(e)
-			}
-			if state.Bytes+int64(len(encoded)) > maxDocument {
-				return fail(fmt.Errorf("recording exceeds 64 MiB; reduce samples"))
-			}
-			if err = writeJSON(framePath(h.root, s.ID, state.Frames), m.Events); err != nil {
-				return fail(err)
-			}
-			state.Bytes += int64(len(encoded))
-			state.Events += len(m.Events)
-			state.Frames++
-		} else {
-			switch m.Status {
-			case "complete", "unsupported", "failed", "cancelled":
-				state.Status = m.Status
-			default:
-				return fail(fmt.Errorf("invalid final status"))
-			}
+		switch m.Status {
+		case "complete", "unsupported", "failed", "cancelled":
+		default:
+			return fail(fmt.Errorf("invalid final status"))
 		}
+		var state streamState
+		if err := readJSON(statePath(h.root, s.ID), &state); err != nil {
+			return fail(err)
+		}
+		state.Status = m.Status
 		state.Next++
 		state.Revision++
+		state.Telemetry = &receipt.Telemetry
+		if m.ExpectedPackets > 0 && !receipt.Telemetry.NativeClosed {
+			state.Telemetry.Partial = true
+		}
 		if m.Progress != nil {
 			state.Progress = m.Progress
 		}
-		if err = writeJSON(statePath(h.root, s.ID), state); err != nil {
+		if err := writeJSON(statePath(h.root, s.ID), state); err != nil {
 			return fail(err)
 		}
-		if m.Op == "append" {
-			s.Events = append(s.Events, m.Events...)
-		}
 		applyStreamState(s, state)
-		h.stream = s
-		if m.Op == "finish" {
-			if err = rememberSession(h.root, s); err != nil {
-				return fail(err)
-			}
+		h.remember(s)
+		if err := rememberSession(h.root, s); err != nil {
+			return fail(err)
 		}
-		h.updated = time.Now().UTC()
 		if m.Progress != nil {
 			h.progress = *m.Progress
 		}
-		h.remember(s)
-		return WireReply{OK: true, ID: s.ID, NextSequence: s.NextSequence, Revision: s.Revision}
+		h.updated = time.Now().UTC()
+		receipt.Revision = s.Revision
+		receipt.NextSequence = s.NextSequence
+		return receipt
 
 	default:
 		return fail(fmt.Errorf("unknown wire op %q", m.Op))
@@ -434,6 +457,10 @@ func (h *liveHub) stop() {
 	listener := h.listener
 	h.stopping = true
 	h.listener = nil
+	if h.udp != nil {
+		h.udp.Close()
+		h.udp = nil
+	}
 	if listener != nil {
 		listener.Close()
 	}

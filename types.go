@@ -93,6 +93,7 @@ type Summary struct {
 	Events  int       `json:"events"`
 }
 type Request struct {
+	UDPAddress     string   `json:"udp_address"`
 	Received       int      `json:"received"`
 	IncludeSession *bool    `json:"include_session,omitempty"`
 	Offset         int      `json:"offset"`

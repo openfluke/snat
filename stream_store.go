@@ -2,6 +2,8 @@
 package snat
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,14 +11,16 @@ import (
 )
 
 type streamState struct {
-	Status   string    `json:"status"`
-	Title    string    `json:"title"`
-	Next     int64     `json:"next"`
-	Revision int64     `json:"revision"`
-	Frames   int64     `json:"frames"`
-	Events   int       `json:"events"`
-	Bytes    int64     `json:"bytes"`
-	Progress *Progress `json:"progress,omitempty"`
+	Token     string    `json:"token"`
+	Telemetry *UDPStats `json:"telemetry,omitempty"`
+	Status    string    `json:"status"`
+	Title     string    `json:"title"`
+	Next      int64     `json:"next"`
+	Revision  int64     `json:"revision"`
+	Frames    int64     `json:"frames"`
+	Events    int       `json:"events"`
+	Bytes     int64     `json:"bytes"`
+	Progress  *Progress `json:"progress,omitempty"`
 }
 
 func statePath(root, id string) string { return filepath.Join(root, "sessions", id, "stream.json") }
@@ -29,6 +33,12 @@ func applyStreamState(s *Session, state streamState) {
 	s.Revision = state.Revision
 	s.NextSequence = state.Next
 	s.EventCount = state.Events
+	if state.Telemetry != nil {
+		if s.Metadata == nil {
+			s.Metadata = map[string]any{}
+		}
+		s.Metadata["telemetry"] = state.Telemetry
+	}
 	if s.Metadata == nil {
 		s.Metadata = map[string]any{}
 	}
@@ -50,7 +60,11 @@ func createStream(root string, s *Session) error {
 	if err = writeJSON(path, s); err != nil {
 		return err
 	}
-	state := streamState{Status: "running", Title: s.Title, Revision: 1}
+	var secret [24]byte
+	if _, err = rand.Read(secret[:]); err != nil {
+		return err
+	}
+	state := streamState{Status: "running", Title: s.Title, Revision: 1, Token: hex.EncodeToString(secret[:])}
 	if err = writeJSON(statePath(root, s.ID), state); err != nil {
 		return err
 	}

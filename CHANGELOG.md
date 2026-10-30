@@ -1,5 +1,12 @@
 # SNAT changelog
 
+## 1.1.0 — Live sessions
+
+- TCP session management and TANHI UDP neural telemetry, with per-session routing.
+- Durable streamed sessions, progress, viewer follow/pin and playback acknowledgement.
+- UDP sample retransmission, sequence deduplication and native packet-gap reporting.
+- Native Welvet timing events retain provenance separately from measured tensors.
+
 ## Repository extraction — 30 October 2026
 
 - Moved the Go library, tests and optional download helper from Fable into the
